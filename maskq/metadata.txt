@@ -1,0 +1,17 @@
+[general]
+name=MaskQ
+qgisMinimumVersion=3.16
+description=Mask or clip rasters by value range, raster mask, or polygon boundary. Interactive histogram with draggable handles. Live canvas preview.
+version=0.1.0
+author=Daniel Moyo
+email=moyodanj@gmail.com
+about=MaskQ lets you mask or clip any local raster using three methods: (1) keep pixels within a value range or meeting a threshold condition, (2) use a second raster as a quality or flag mask, or (3) clip to a polygon vector boundary. Features an interactive histogram with draggable handles, live map-canvas preview, smart auto-naming that embeds condition values in the output filename, and full QGIS Processing Toolbox integration for batch use. Designed for remote sensing, DEM analysis, and field mapping workflows.
+tracker=https://github.com/danielmoyo/maskq/issues
+repository=https://github.com/danielmoyo/maskq
+homepage=https://github.com/danielmoyo/maskq
+tags=raster,mask,clip,threshold,value range,vector,polygon,histogram,NDVI,DEM,remote sensing,Sentinel,Landsat,conditional,pixel
+category=Raster
+icon=icons/icon.png
+experimental=True
+deprecated=False
+hasProcessingProvider=True
