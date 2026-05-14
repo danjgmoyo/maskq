@@ -150,7 +150,7 @@ class MaskQPanel(QDockWidget):
         self.setObjectName('MaskQDock')
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
 
-        # runtime state
+        # Instance state — all None/empty until first use
         self._stats_thread  = None
         self._stats_worker  = None
         self._task          = None
@@ -239,7 +239,7 @@ class MaskQPanel(QDockWidget):
         form.addRow('Condition band', self.cmb_band)
         vl.addLayout(form)
 
-        # Info bar
+        # Shows raster dtype, CRS, and value range after statistics load.
         self.lbl_info = _lbl('', 'dim')
         self.lbl_info.setWordWrap(True)
         vl.addWidget(self.lbl_info)
@@ -257,7 +257,7 @@ class MaskQPanel(QDockWidget):
         # This is QGIS's job, not the plugin's.
         try:
             from qgis.core import QgsProviderRegistry
-            filt = QgsProviderRegistry.instance().fileMaskQs()
+            filt = QgsProviderRegistry.instance().fileRasterFilters()
             # Append a plain .tif catch-all at the start for quick typing
             if filt:
                 self.file_out.setFilter(filt)
@@ -296,6 +296,7 @@ class MaskQPanel(QDockWidget):
         self._mode_stack.addWidget(self._build_vector_mask_page())
         vl.addWidget(self._mode_stack)
         return card
+
     def _build_value_range_page(self):
         w  = QWidget()
         vl = QVBoxLayout(w)
@@ -318,7 +319,8 @@ class MaskQPanel(QDockWidget):
             ct_row.addWidget(b)
         self._cond_group.buttonClicked[int].connect(self._switch_cond)
         vl.addLayout(ct_row)
-                # Condition stack
+
+        # Condition stack
         self._cond_stack = QStackedWidget()
 
         # Page 0: range
@@ -489,13 +491,6 @@ class MaskQPanel(QDockWidget):
 
         # Operation
         self.cmb_operation = QComboBox()
-        # Mask  — keep full raster extent, pixels outside condition → NoData
-        # Clip  — crop raster to bounding box of kept pixels, outside → NoData
-        #         (equivalent to QGIS 'Clip raster by mask layer')
-        # Operation items are added dynamically by _rebuild_operation_combo()
-        # which is called from _switch_mode() every time the mode tab changes.
-        # Clip and Crop only appear when Vector Mask mode is active.
-
         # Output type
         self.cmb_out_type = QComboBox()
         self.cmb_out_type.addItem('Real values  (preserve pixel values)', 0)
@@ -810,13 +805,8 @@ class MaskQPanel(QDockWidget):
         self._data_min = lo
         self._data_max = hi
 
-        # Clamp spinbox range to raster data range.
-        # This prevents users from entering values outside the data range,
-        # which would make the histogram handles map off-screen and produce
-        # confusing results (e.g. keeping 0% or 100% of pixels silently).
-        # Clamp spinboxes to exact data range — no outside values allowed.
-        # spn_min: can go from data_min up to data_max (sets lower keep bound)
-        # spn_max: can go from data_min up to data_max (sets upper keep bound)
+        # Clamp spinboxes to the raster data range so histogram handles
+        # always map on-screen and extreme conditions are visible to the user.
         self.spn_min.blockSignals(True)
         self.spn_max.blockSignals(True)
         self.spn_min.setRange(lo, hi)
@@ -1188,9 +1178,8 @@ class MaskQPanel(QDockWidget):
             # Guard: never overwrite the input raster
             lyr_check = self.cmb_layer.currentLayer()
             if lyr_check:
-                import os as _os
-                src_norm = _os.path.normcase(_os.path.normpath(lyr_check.source()))
-                out_norm = _os.path.normcase(_os.path.normpath(path))
+                src_norm = os.path.normcase(os.path.normpath(lyr_check.source()))
+                out_norm = os.path.normcase(os.path.normpath(path))
                 if src_norm == out_norm:
                     self._bar(
                         'Output path is the same as the input raster. '
@@ -1383,8 +1372,7 @@ class MaskQPanel(QDockWidget):
             self.spn_max.setValue(hi)
             self.spn_min.blockSignals(False)
             self.spn_max.blockSignals(False)
-        # Always refresh the condition label and live preview
-        self._on_range_change()
+        self._on_range_change()  # sync condition label and preview
 
     def _unload_layers_at(self, path):
         """Remove layers at *path* from QGIS (Windows file-lock workaround).

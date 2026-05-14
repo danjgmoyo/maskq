@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 """
 provider.py  —  QGIS Processing Toolbox integration.
 
@@ -115,7 +116,6 @@ class _MQAlgoBase(QgsProcessingAlgorithm):
 
     def _run_task(self, params, parameters, context, feedback):
         """Build and run the task synchronously, return the output path."""
-        import os
         out_path = self.parameterAsOutputLayer(parameters, 'OUTPUT', context)
         ext      = os.path.splitext(out_path)[1].lower()
         params['output_path']   = out_path

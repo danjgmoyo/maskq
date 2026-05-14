@@ -24,7 +24,7 @@ from qgis.PyQt.QtWidgets import (QWidget, QVBoxLayout, QPushButton,
                                   QSizePolicy, QFrame, QLabel)
 
 # ── colour palette (matches panel.py) ────────────────────────────────────────
-_G  = '#589632'; _GM = '#73A843'; _GD = '#374E11'
+_G = '#589632'   # brand green — used for handle and threshold line colours
 
 _COL_BAR      = QColor(100, 150, 200, 160)
 _COL_KEEP     = QColor(88,  150,  50,  55)
@@ -66,7 +66,7 @@ class _HistCanvas(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMouseTracking(True)
 
-        # Data
+        # Histogram data (set via set_data)
         self._counts   = np.array([], dtype=np.float64)
         self._dmin     = 0.0
         self._dmax     = 1.0
@@ -80,11 +80,11 @@ class _HistCanvas(QWidget):
         self._thr_op   = '>'
         self._thr_val  = 0.0
 
-        # Interaction
-        self._dragging = None   # 'lo' | 'hi' | None
+        # Mouse interaction state
+        self._dragging = None   # 'lo' | 'hi' | 'thr' | None
         self._hover    = None   # 'lo' | 'hi' | None
 
-        # Drawing margins
+        # Plot area margins in pixels (left, right, top, bottom)
         self._ml, self._mr, self._mt, self._mb = 8, 8, 8, 20
 
     # ── public API ────────────────────────────────────────────────────────────
