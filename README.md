@@ -106,18 +106,6 @@ processing.run("maskq:maskbyvaluerange", {
 
 ---
 
-## Contributing
-
-Issues and pull requests are welcome.
-
-To run the test suite (requires GDAL):
-
-```bash
-cd maskq
-python test_maskq.py
-```
-
----
 
 ## License
 
