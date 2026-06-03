@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-panel.py  —  MaskQ dock panel.
+panel.py  —  maskq dock panel.
 
 One class. Inherits only QDockWidget.
 Builds its own UI, runs its own stats thread, launches the task.
