@@ -24,3 +24,5 @@ desktop.ini
 # QGIS project files
 *.qgs
 *.qgz
+
+*.gitignore
