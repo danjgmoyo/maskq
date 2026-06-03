@@ -53,7 +53,7 @@ Three output operations:
 
 ### Manual install from ZIP
 
-1. Download `maskq.zip` from [Releases](https://github.com/danieljgmoyo/maskq/releases)
+1. Download `maskq.zip` from [Releases](https://github.com/danjgmoyo/maskq/releases)
 2. QGIS → **Plugins → Manage and Install Plugins → Install from ZIP**
 3. Browse to the downloaded ZIP → **Install Plugin**
 
