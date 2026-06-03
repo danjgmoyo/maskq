@@ -1,5 +1,5 @@
 [general]
-name=maskQ
+name=maskq
 qgisMinimumVersion=3.16
 description=Mask or clip rasters by value range, raster mask, or polygon boundary. Interactive histogram with draggable handles. Live canvas preview.
 version=0.1.0
