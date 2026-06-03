@@ -230,12 +230,18 @@ class MaskQPanel(QDockWidget):
             'Example: a 4-band Sentinel composite with condition\n'
             '"Band 4 >= 0.3" will still produce a 4-band output.\n'
             'Every band is masked wherever Band 4 fails the condition.')
+        # Layer picker spans full width — putting QgsMapLayerComboBox
+        # inside a QFormLayout label+field row collapses it to just the
+        # dropdown arrow because the label column eats most of the width.
+        # Standard QGIS convention: layer picker is always full-width.
+        vl.addWidget(QLabel('Layer'))
+        vl.addWidget(self.cmb_layer)
+
         form = QFormLayout()
-        form.setContentsMargins(0, 0, 0, 0)
+        form.setContentsMargins(0, 4, 0, 0)
         form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        form.addRow('Layer', self.cmb_layer)
         form.addRow('Condition band', self.cmb_band)
         vl.addLayout(form)
 
