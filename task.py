@@ -509,21 +509,26 @@ class MaskQTask(QgsTask):
         """Mode 1 — Value range / threshold mask.
 
         Two sub-modes (set by params['condition_type']):
-          0 = Range:     keep pixels where  v_min ≤ value ≤ v_max
+          0 = Range:     keep pixels where  value <min_op> v_min  AND
+                                             value <max_op> v_max
+              where <min_op> is one of  ≥ >   and  <max_op> is one of  ≤ <
+              (defaults ≥ / ≤ reproduce the original inclusive behaviour)
           1 = Threshold: keep pixels where  value <op> threshold
               where <op> is one of  > ≥ < ≤ = ≠
 
         Reads the selected band in horizontal strips for memory efficiency.
         """
-        ref   = max(0, min(p.get('ref_band', 1) - 1, ds.RasterCount - 1))
-        band  = ds.GetRasterBand(ref + 1)
-        nd    = nds[ref]                       # input NoData value for this band
-        ctype = p.get('condition_type', 0)     # 0=range, 1=threshold
-        vmin  = p.get('v_min',      0.0)
-        vmax  = p.get('v_max',      1.0)
-        op    = p.get('operator',   '>')
-        thr   = p.get('threshold',  0.0)
-        excl  = p.get('exclude_nodata', True)
+        ref     = max(0, min(p.get('ref_band', 1) - 1, ds.RasterCount - 1))
+        band    = ds.GetRasterBand(ref + 1)
+        nd      = nds[ref]                       # input NoData value for this band
+        ctype   = p.get('condition_type', 0)     # 0=range, 1=threshold
+        vmin    = p.get('v_min',      0.0)
+        vmax    = p.get('v_max',      1.0)
+        min_op  = p.get('min_op',     '≥')
+        max_op  = p.get('max_op',     '≤')
+        op      = p.get('operator',   '>')
+        thr     = p.get('threshold',  0.0)
+        excl    = p.get('exclude_nodata', True)
 
         keep = np.zeros((H, W), dtype=bool)
         for y0 in range(0, H, _STRIP):
@@ -532,8 +537,8 @@ class MaskQTask(QgsTask):
             h   = min(_STRIP, H - y0)
             arr = band.ReadAsArray(0, y0, W, h).astype(np.float64)
             # Apply the condition
-            m = ((arr >= vmin) & (arr <= vmax)) if ctype == 0 \
-                else _cmp(arr, op, thr)
+            m = (_cmp(arr, min_op, vmin) & _cmp(arr, max_op, vmax)) \
+                if ctype == 0 else _cmp(arr, op, thr)
             # Exclude original NoData pixels (they are not real data values)
             if excl and nd is not None:
                 m &= (arr != nd)

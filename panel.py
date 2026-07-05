@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-panel.py  —  maskq dock panel.
+panel.py  —  MaskQ dock panel.
 
 One class. Inherits only QDockWidget.
 Builds its own UI, runs its own stats thread, launches the task.
@@ -78,10 +78,10 @@ def _card(title=''):
     return gb, vl
 
 def _lbl(text, role=None):
-    l = QLabel(text)
+    lbl = QLabel(text)
     if role:
-        l.setObjectName(role)
-    return l
+        lbl.setObjectName(role)
+    return lbl
 
 def _hbox(*items, spacing=6):
     h = QHBoxLayout()
@@ -264,11 +264,17 @@ class MaskQPanel(QDockWidget):
         try:
             from qgis.core import QgsProviderRegistry
             filt = QgsProviderRegistry.instance().fileRasterFilters()
-            # Append a plain .tif catch-all at the start for quick typing
             if filt:
                 self.file_out.setFilter(filt)
         except Exception:
             pass   # leave QgsFileWidget with its default filter
+        # QGIS native filter starts with VRT — placeholder clarifies
+        # that leaving the field blank auto-saves as .tif
+        try:
+            self.file_out.lineEdit().setPlaceholderText(
+                'Leave blank to auto-save as .tif next to input')
+        except Exception:
+            pass
         last_dir = QgsSettings().value('MaskQ/last_dir', '')
         if last_dir:
             self.file_out.setDefaultRoot(last_dir)
@@ -334,10 +340,22 @@ class MaskQPanel(QDockWidget):
         rl = QHBoxLayout(rp)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
+        self.cmb_min_op = QComboBox()
+        for sym in ['≥', '>']:
+            self.cmb_min_op.addItem(sym)
+        self.cmb_min_op.setToolTip(
+            'Comparison applied to the Min boundary.\n'
+            '≥ includes the Min value itself, > excludes it.')
         self.spn_min = QDoubleSpinBox()
         self.spn_min.setDecimals(6)
         self.spn_min.setRange(-1e15, 1e15)
         self.spn_min.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cmb_max_op = QComboBox()
+        for sym in ['≤', '<']:
+            self.cmb_max_op.addItem(sym)
+        self.cmb_max_op.setToolTip(
+            'Comparison applied to the Max boundary.\n'
+            '≤ includes the Max value itself, < excludes it.')
         self.spn_max = QDoubleSpinBox()
         self.spn_max.setDecimals(6)
         self.spn_max.setRange(-1e15, 1e15)
@@ -348,8 +366,10 @@ class MaskQPanel(QDockWidget):
         self.btn_reset.setToolTip('Reset Min and Max to the full data range')
         self.btn_reset.setFixedHeight(26)
         rl.addWidget(_lbl('Min'))
+        rl.addWidget(self.cmb_min_op)
         rl.addWidget(self.spn_min)
         rl.addWidget(_lbl('Max'))
+        rl.addWidget(self.cmb_max_op)
         rl.addWidget(self.spn_max)
         rl.addWidget(self.btn_reset)
         self._cond_stack.addWidget(rp)
@@ -495,6 +515,30 @@ class MaskQPanel(QDockWidget):
     def _build_options_card(self):
         card, vl = _card('Output Options')
 
+        # ── Live preview row — placed first so it's immediately visible ───────
+        self.chk_preview  = QCheckBox('Live preview on map')
+        self.chk_preview.setEnabled(False)
+        self.chk_preview.setToolTip(
+            'Highlights kept pixels on the map canvas.\n'
+            'Updates as you change the value range.\n'
+            'Available for Value Range mode after statistics load.')
+
+        self.btn_color = QgsColorButton()
+        self.btn_color.setColor(
+            QColor(QgsSettings().value('MaskQ/color', '#DC5014')))
+        self.btn_color.setToolTip(
+            'Preview / binary output highlight colour')
+        self.btn_color.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.btn_color.setFixedWidth(48)
+
+        preview_row = QHBoxLayout()
+        preview_row.setSpacing(6)
+        preview_row.addWidget(self.chk_preview)
+        preview_row.addStretch()
+        preview_row.addWidget(_lbl('Colour', 'dim'))
+        preview_row.addWidget(self.btn_color)
+        vl.addLayout(preview_row)
+
         # Operation
         self.cmb_operation = QComboBox()
         # Output type
@@ -502,7 +546,7 @@ class MaskQPanel(QDockWidget):
         self.cmb_out_type.addItem('Real values  (preserve pixel values)', 0)
         self.cmb_out_type.addItem('Binary  (1 = kept,  255 = masked)',    1)
 
-        # NoData value + colour
+        # NoData value
         self.spn_nodata = QDoubleSpinBox()
         self.spn_nodata.setDecimals(4)
         self.spn_nodata.setRange(-1e15, 1e15)   # no artificial limit
@@ -527,12 +571,6 @@ class MaskQPanel(QDockWidget):
             'Set NoData to match the input raster\'s own NoData value.\n'
             'Shown in the info bar above (e.g. NoData=-32768).')
 
-        self.btn_color = QgsColorButton()
-        self.btn_color.setColor(
-            QColor(QgsSettings().value('MaskQ/color', '#DC5014')))
-        self.btn_color.setToolTip('Preview / binary output highlight colour')
-        self.btn_color.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-
         self.lbl_nd_note = _lbl('Binary mode: masked pixels = 255', 'dim')
         self.lbl_nd_note.hide()
 
@@ -546,8 +584,6 @@ class MaskQPanel(QDockWidget):
         nd_row.setSpacing(4)
         nd_row.addWidget(self.spn_nodata, 3)
         nd_row.addWidget(self.btn_nd_match)
-        nd_row.addWidget(QLabel('Colour'))
-        nd_row.addWidget(self.btn_color, 1)
 
         form.addRow('Operation', self.cmb_operation)
         form.addRow('Output type', self.cmb_out_type)
@@ -563,15 +599,9 @@ class MaskQPanel(QDockWidget):
         self.chk_excl_nd.setChecked(True)
         self.chk_load     = QCheckBox('Load result into QGIS')
         self.chk_load.setChecked(True)
-        self.chk_preview  = QCheckBox('Live preview on map')
-        self.chk_preview.setEnabled(False)
-        self.chk_preview.setToolTip(
-            'Highlights kept pixels on the map canvas.\n'
-            'Updates as you change the value range.\n'
-            'Available for Value Range mode after statistics load.')
 
         for chk in (self.chk_invert, self.chk_preserve, self.chk_excl_nd,
-                    self.chk_load, self.chk_preview):
+                    self.chk_load):
             vl.addWidget(chk)
 
         return card
@@ -613,8 +643,10 @@ class MaskQPanel(QDockWidget):
         pairs = [
             (self.cmb_layer,   self.cmb_band),
             (self.cmb_band,    self.file_out),
-            (self.file_out,    self.spn_min),
-            (self.spn_min,     self.spn_max),
+            (self.file_out,    self.cmb_min_op),
+            (self.cmb_min_op,  self.spn_min),
+            (self.spn_min,     self.cmb_max_op),
+            (self.cmb_max_op,  self.spn_max),
             (self.spn_max,     self.spn_nodata),
             (self.spn_nodata,  self.btn_run),
         ]
@@ -639,6 +671,8 @@ class MaskQPanel(QDockWidget):
 
         self.spn_min.valueChanged.connect(self._on_range_change)
         self.spn_max.valueChanged.connect(self._on_range_change)
+        self.cmb_min_op.currentIndexChanged.connect(self._on_range_change)
+        self.cmb_max_op.currentIndexChanged.connect(self._on_range_change)
         self.cmb_op.currentIndexChanged.connect(self._on_range_change)
         self.spn_thr.valueChanged.connect(self._on_range_change)
         self.chk_invert.stateChanged.connect(self._on_range_change)
@@ -999,17 +1033,21 @@ class MaskQPanel(QDockWidget):
         act = 'Remove' if inv else 'Keep'
         ct  = self._cond_stack.currentIndex()
         if ct == 0:
-            lo, hi = self.spn_min.value(), self.spn_max.value()
-            if lo >= hi:
+            lo, hi   = self.spn_min.value(), self.spn_max.value()
+            min_op   = self.cmb_min_op.currentText()
+            max_op   = self.cmb_max_op.currentText()
+            invalid  = (lo > hi) or (lo == hi and (min_op == '>' or max_op == '<'))
+            if invalid:
                 self.lbl_cond.setObjectName('err')
-                msg = ('⚠  Min = Max — all pixels will be masked'
-                       if lo == hi else
-                       '⚠  Min > Max — all pixels will be masked')
+                if lo > hi:
+                    msg = '⚠  Min > Max — all pixels will be masked'
+                else:
+                    msg = '⚠  Strict operator on equal Min/Max — all pixels will be masked'
                 self.lbl_cond.setText(msg)
             else:
                 self.lbl_cond.setObjectName('ok')
                 self.lbl_cond.setText(
-                    f'{act}:  {lo:.6g}  ≤  value  ≤  {hi:.6g}')
+                    f'{act}:  {lo:.6g}  {min_op}  value  {max_op}  {hi:.6g}')
         else:
             op  = self.cmb_op.currentText()
             thr = self.spn_thr.value()
@@ -1023,6 +1061,8 @@ class MaskQPanel(QDockWidget):
             if ct == 0:
                 self._histogram.set_range_mode()
                 self._histogram.set_range(self.spn_min.value(), self.spn_max.value())
+                self._histogram.set_range_ops(
+                    self.cmb_min_op.currentText(), self.cmb_max_op.currentText())
             else:
                 self._histogram.set_threshold(
                     self.cmb_op.currentText(), self.spn_thr.value())
@@ -1097,6 +1137,14 @@ class MaskQPanel(QDockWidget):
 
             if ct == 0:
                 lo, hi = self.spn_min.value(), self.spn_max.value()
+                # Nudge boundaries inward by an epsilon for strict (>, <)
+                # operators so the shaded preview approximates the actual
+                # excluded boundary pixel (best-effort visual only).
+                eps = max(abs(hi - lo), 1.0) * 1e-9
+                if self.cmb_min_op.currentText() == '>':
+                    lo = lo + eps
+                if self.cmb_max_op.currentText() == '<':
+                    hi = hi - eps
             else:
                 op  = self.cmb_op.currentText()
                 thr = self.spn_thr.value()
@@ -1204,8 +1252,15 @@ class MaskQPanel(QDockWidget):
                 self._bar('Min must be ≤ Max — no pixels would be kept.',
                           Qgis.Warning)
                 return
-            if (self._cond_stack.currentIndex() == 0 and
-                    self.spn_min.value() == self.spn_max.value()):
+            if self._cond_stack.currentIndex() == 0 and \
+                    self.spn_min.value() == self.spn_max.value():
+                strict = (self.cmb_min_op.currentText() == '>' or
+                          self.cmb_max_op.currentText() == '<')
+                if strict:
+                    self._bar(
+                        'Min equals Max with a strict (>/<) operator — '
+                        'no pixels would be kept.', Qgis.Warning)
+                    return
                 self._bar(
                     'Min equals Max — only pixels with exactly that value '
                     'would be kept. Is that intentional?',
@@ -1281,6 +1336,8 @@ class MaskQPanel(QDockWidget):
             'condition_type': self._cond_stack.currentIndex(),
             'v_min'         : self.spn_min.value(),
             'v_max'         : self.spn_max.value(),
+            'min_op'        : self.cmb_min_op.currentText(),
+            'max_op'        : self.cmb_max_op.currentText(),
             'operator'      : self.cmb_op.currentText(),
             'threshold'     : self.spn_thr.value(),
         }
@@ -1418,6 +1475,18 @@ class MaskQPanel(QDockWidget):
             return False, f'Directory does not exist:\n{d}'
         if not os.access(d, os.W_OK):
             return False, f'Directory is not writable:\n{d}'
+
+        # Confirm before silently overwriting an existing file
+        if os.path.exists(path):
+            from qgis.PyQt.QtWidgets import QMessageBox
+            ans = QMessageBox.question(
+                self, 'MaskQ — File exists',
+                f'Output file already exists:\n{path}\n\nOverwrite it?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No)
+            if ans != QMessageBox.Yes:
+                return False, ''
+
         return True, ''
 
     def _build_output_name(self, lyr, mode):
@@ -1467,9 +1536,12 @@ class MaskQPanel(QDockWidget):
             # Value Range or Threshold — include the actual values in the name
             if self._cond_stack.currentIndex() == 0:
                 # Range mode: NDVI_masked_range_0p3to0p8
-                lo = self.spn_min.value()
-                hi = self.spn_max.value()
-                mode_str = f'range_{_fmt_val(lo)}to{_fmt_val(hi)}'
+                lo      = self.spn_min.value()
+                hi      = self.spn_max.value()
+                min_tag = '' if self.cmb_min_op.currentText() == '≥' else 'x'
+                max_tag = '' if self.cmb_max_op.currentText() == '≤' else 'x'
+                mode_str = (f'range_{min_tag}{_fmt_val(lo)}'
+                            f'to{_fmt_val(hi)}{max_tag}')
             else:
                 # Threshold mode: DEM_masked_threshold_gt500
                 op_sym = self.cmb_op.currentText()
@@ -1554,9 +1626,9 @@ class MaskQPanel(QDockWidget):
             exc = task.exception
             if exc is not None:
                 # Grab last meaningful line from traceback for the bar
-                lines = [l.strip() for l in tb.splitlines()
-                         if l.strip()
-                         and not l.strip().startswith(
+                lines = [ln.strip() for ln in tb.splitlines()
+                         if ln.strip()
+                         and not ln.strip().startswith(
                              ('Traceback', 'File ', '  File '))]
                 detail = lines[-1] if lines else str(exc)
                 msg    = f'{type(exc).__name__}: {detail}'

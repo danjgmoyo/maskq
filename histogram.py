@@ -18,7 +18,7 @@ import numpy as np
 
 from qgis.PyQt.QtCore    import Qt, pyqtSignal, QRectF, QPointF
 from qgis.PyQt.QtGui     import (QPainter, QColor, QPen, QBrush,
-                                  QLinearGradient, QFont, QPainterPath,
+                                  QFont, QPainterPath,
                                   QFontMetrics, QCursor, QPalette)
 from qgis.PyQt.QtWidgets import (QWidget, QVBoxLayout, QPushButton,
                                   QSizePolicy, QFrame, QLabel)
@@ -74,6 +74,10 @@ class _HistCanvas(QWidget):
         # Range handles
         self._lo       = 0.0
         self._hi       = 1.0
+        # Range handle operators — controls solid (inclusive) vs dashed
+        # (strict) handle line, mirroring threshold-mode convention.
+        self._min_op   = '≥'   # '≥' or '>'  → applies to lo
+        self._max_op   = '≤'   # '≤' or '<'  → applies to hi
 
         # Threshold visualisation
         self._vis_mode = 'range'   # 'range' | 'threshold'
@@ -93,11 +97,25 @@ class _HistCanvas(QWidget):
         self._counts = np.asarray(counts, dtype=np.float64)
         self._dmin   = float(dmin)
         self._dmax   = float(dmax)
+        # Reset handles to cover the full data range so they are
+        # immediately draggable — both handles start at opposite ends.
+        self._lo = float(dmin)
+        self._hi = float(dmax)
         self.repaint()
 
     def set_range(self, lo, hi):
         self._lo = max(self._dmin, min(float(lo), self._dmax))
         self._hi = max(self._dmin, min(float(hi), self._dmax))
+        self.repaint()
+
+    def set_range_ops(self, min_op, max_op):
+        """Set the comparison operators used for the Min/Max handles.
+
+        Controls solid (inclusive: ≥ ≤) vs dashed (strict: > <) handle
+        line style, matching threshold-mode's convention.
+        """
+        self._min_op = min_op
+        self._max_op = max_op
         self.repaint()
 
     def set_range_mode(self):
@@ -209,8 +227,11 @@ class _HistCanvas(QWidget):
             # '≠' shades everything — skip (would be confusing)
             if shade is not None and shade.width() > 0:
                 p.fillRect(shade, _COL_KEEP)
-            # Dashed vertical line
-            p.setPen(QPen(_COL_THR, 1.8, Qt.DashLine))
+            # Solid line for inclusive operators (≥ ≤ =),
+            # dashed for strict (> <), to match mathematical convention.
+            inclusive = op in ('≥', '>=', '≤', '<=', '=')
+            line_style = Qt.SolidLine if inclusive else Qt.DashLine
+            p.setPen(QPen(_COL_THR, 1.8, line_style))
             p.drawLine(QPointF(tx, oy), QPointF(tx, bot))
             # Value label just above the line
             font = QFont(); font.setPointSizeF(7.5)
@@ -242,7 +263,12 @@ class _HistCanvas(QWidget):
                 col = (_COL_HANDLE_H
                        if (self._hover == side or self._dragging == side)
                        else _COL_HANDLE)
-                p.setPen(QPen(col, 2.0))
+                # Solid line for inclusive operators (≥ ≤), dashed for
+                # strict (> <) — same convention as threshold mode.
+                op = self._min_op if side == 'lo' else self._max_op
+                inclusive  = op in ('≥', '>=', '≤', '<=')
+                line_style = Qt.SolidLine if inclusive else Qt.DashLine
+                p.setPen(QPen(col, 2.0, line_style))
                 p.drawLine(QPointF(hx2, oy), QPointF(hx2, bot))
                 kw   = 7
                 path = QPainterPath()
@@ -399,6 +425,10 @@ class HistogramSection(QWidget):
             self._canvas.range_changed.connect(self.range_changed)
         except Exception:
             pass
+
+    def set_range_ops(self, min_op, max_op):
+        """Set Min/Max handle operators — controls solid vs dashed line."""
+        self._canvas.set_range_ops(min_op, max_op)
 
     def set_range_mode(self):
         """Switch canvas to range (two handles) mode."""

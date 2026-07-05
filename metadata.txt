@@ -1,11 +1,11 @@
 [general]
-name=maskq
+name=MaskQ
 qgisMinimumVersion=3.16
 description=Mask or clip rasters by value range, raster mask, or polygon boundary. Interactive histogram with draggable handles. Live canvas preview.
-version=0.1.0
+version=0.1.1
 author=Daniel Moyo
 email=moyodanj@gmail.com
-about=MaskQ lets you mask or clip any local raster using three methods: (1) keep pixels within a value range or meeting a threshold condition, (2) use a second raster as a quality or flag mask, or (3) clip to a polygon vector boundary. Features an interactive histogram with draggable handles, live map-canvas preview, smart auto-naming that embeds condition values in the output filename, and full QGIS Processing Toolbox integration for batch use. Designed for remote sensing, DEM analysis, and field mapping workflows.
+about=MaskQ lets you mask or clip any local raster using three methods: (1) keep pixels within a configurable value range or meeting a threshold condition, (2) use a second raster as a quality or flag mask, or (3) clip to a polygon vector boundary. Features an interactive histogram with draggable handles, live map-canvas preview with adjustable highlight colour, smart auto-naming that embeds condition values in the output filename, and full QGIS Processing Toolbox integration for batch use. Designed for remote sensing, DEM analysis, and field mapping workflows.
 tracker=https://github.com/danjgmoyo/maskq/issues
 repository=https://github.com/danjgmoyo/maskq
 homepage=https://github.com/danjgmoyo/maskq
@@ -15,3 +15,13 @@ icon=icons/icon.png
 experimental=True
 deprecated=False
 hasProcessingProvider=True
+changelog=0.1.1
+    - Range mode Min/Max boundaries can each be set to inclusive (>=, <=) or strict (>, <), matching Threshold mode
+    - Histogram handles now show solid (inclusive) or dashed (strict) lines for both Range and Threshold modes
+    - Fixed histogram handles being stuck disabled until a value was changed manually
+    - Added a confirmation prompt before overwriting an existing output file
+    - Clarified that leaving the output path blank saves a .tif by default
+    - Moved the live preview toggle to the top of Output Options and restored the highlight colour picker
+    0.1.0
+    - First public release: mask or clip rasters by value range/threshold, a second raster mask, or a vector polygon boundary
+

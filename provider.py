@@ -143,8 +143,9 @@ class AlgoValueRange(_MQAlgoBase):
     def displayName(self): return 'Mask / clip by value range'
     def shortHelpString(self):
         return (
-            'Keep pixels whose value falls within [Min, Max] (Range mode) '
-            'or satisfies a threshold comparison (Threshold mode). '
+            'Keep pixels whose value satisfies the Min/Max boundary '
+            'comparisons (Range mode — boundaries can each be ≥/> or '
+            '≤/<) or a threshold comparison (Threshold mode). '
             'All other pixels become NoData or are cropped away.')
 
     def initAlgorithm(self, config=None):
@@ -157,9 +158,15 @@ class AlgoValueRange(_MQAlgoBase):
             'CONDITION_TYPE', 'Condition type',
             options=['Range (min ≤ value ≤ max)', 'Threshold (value op threshold)'],
             defaultValue=0))
+        self.addParameter(QgsProcessingParameterEnum(
+            'MIN_OP', 'Min comparison (Range mode)',
+            options=['≥', '>'], defaultValue=0))
         self.addParameter(QgsProcessingParameterNumber(
             'V_MIN', 'Min value (Range mode)',
             type=QgsProcessingParameterNumber.Double, defaultValue=0.0))
+        self.addParameter(QgsProcessingParameterEnum(
+            'MAX_OP', 'Max comparison (Range mode)',
+            options=['≤', '<'], defaultValue=0))
         self.addParameter(QgsProcessingParameterNumber(
             'V_MAX', 'Max value (Range mode)',
             type=QgsProcessingParameterNumber.Double, defaultValue=1.0))
@@ -185,6 +192,10 @@ class AlgoValueRange(_MQAlgoBase):
                 parameters, 'CONDITION_TYPE', context),
             'v_min'         : self.parameterAsDouble(parameters, 'V_MIN', context),
             'v_max'         : self.parameterAsDouble(parameters, 'V_MAX', context),
+            'min_op'        : ['≥', '>'][
+                self.parameterAsInt(parameters, 'MIN_OP', context)],
+            'max_op'        : ['≤', '<'][
+                self.parameterAsInt(parameters, 'MAX_OP', context)],
             'operator'      : ['>', '≥', '<', '≤', '=', '≠'][
                 self.parameterAsInt(parameters, 'OPERATOR', context)],
             'threshold'     : self.parameterAsDouble(
