@@ -4,7 +4,7 @@ task.py  —  Background computation task.
 
 This file is the computation engine. It knows nothing about Qt widgets,
 the QGIS panel, or the histogram. It only reads a params dict and writes
-a GeoTIFF. All three mask modes live here as separate methods.
+a GeoTIFF. All four mask modes live here as separate methods.
 
 ─────────────────────────────────────────────────────────────────────────────
 HOW TO ADD A NEW MASK MODE
@@ -33,13 +33,13 @@ Step 1 — Write the builder method in this file:
 
 Step 2 — Register it in _execute() (one new elif, that's all):
 
-    elif mode == 4:
+    elif mode == 5:
         keep = self._mymode_mask(p, W, H, gt, prj)
 
 Step 3 — Add a UI page in panel.py:
     • New tab button in _build_method_card()
     • New page widget in _build_mymode_page()
-    • New params block in _on_run() under "if mode == 4:"
+    • New params block in _on_run() under "if mode == 5:"
 
 Step 4 — Add a Processing algorithm in provider.py:
     • New class AlgoMyMode(_MQAlgoBase)
@@ -312,10 +312,12 @@ class MaskQTask(QgsTask):
         if   mode == 1: keep = self._range_mask(ds, p, W, H, nds)
         elif mode == 2: keep = self._raster_mask(p, W, H, gt, prj)
         elif mode == 3: keep = self._vector_mask(p, W, H, gt, prj)
+        elif mode == 4: keep = self._canvas_mask(p, W, H, gt, prj)
         else:
             self.exception = ValueError(
                 f'Unknown mode {mode}. '
-                'Valid modes are 1 (value range), 2 (raster mask), 3 (vector mask).')
+                'Valid modes are 1 (value range), 2 (raster mask), '
+                '3 (vector mask), 4 (canvas draw).')
             return False
 
         if keep is None:
@@ -833,3 +835,136 @@ class MaskQTask(QgsTask):
             _CAT, Qgis.Info)
 
         return data == 1    # True where pixel is inside a polygon
+
+    def _canvas_mask(self, p, W, H, gt, prj):
+        """Mode 4 — Canvas Draw mask.
+
+        Rasterises one or more polygons captured on the map canvas — via
+        Freehand, Polygon, Rectangle, or the current map extent
+        — onto the raster grid. Same reproject/rasterise approach as
+        _vector_mask, but geometries come directly as WKT (from the panel's
+        map tool, or the 'GEOMETRY' parameter when run headlessly from the
+        Processing Toolbox) instead of an external vector file.
+
+        p['canvas_wkts']    = list of WKT polygon strings (in canvas_crs_wkt)
+        p['canvas_crs_wkt'] = WKT of the CRS the polygons were captured in
+                               (empty/absent means "assume raster CRS")
+        """
+        wkts = p.get('canvas_wkts') or []
+        if not wkts:
+            self.exception = RuntimeError(
+                'No canvas polygon was drawn.\n'
+                'Use Freehand, Polygon, Rectangle, or Use Current Extent to draw a '
+                'shape before running, or supply a GEOMETRY value if using '
+                'the Processing algorithm.')
+            return None
+
+        src_wkt = p.get('canvas_crs_wkt', '')
+        src_srs = _wkt_to_srs(src_wkt) if src_wkt else None
+        if src_srs is not None:
+            src_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+        dst_srs = _wkt_to_srs(prj)
+        if dst_srs is None:
+            self.exception = RuntimeError(
+                'Input raster has no valid CRS. '
+                'Assign a CRS to it in QGIS before using Canvas Draw.')
+            return None
+
+        # If no source CRS was supplied, assume the geometries are already
+        # in the raster CRS (this is the case for the Processing algorithm
+        # when the caller passes raw raster-CRS coordinates).
+        needs_transform = True
+        if src_srs is not None:
+            needs_transform = not bool(src_srs.IsSame(dst_srs))
+        else:
+            needs_transform = False
+
+        ct = osr.CoordinateTransformation(src_srs, dst_srs) \
+             if (needs_transform and src_srs is not None) else None
+
+        out_mem = ogr.GetDriverByName('Memory').CreateDataSource('canvas')
+        out_lyr = out_mem.CreateLayer(
+            'canvas', srs=dst_srs, geom_type=ogr.wkbPolygon)
+
+        n_ok = 0
+        for wkt in wkts:
+            g = ogr.CreateGeometryFromWkt(wkt)
+            if g is None:
+                continue
+            if ct is not None and g.Transform(ct) != 0:
+                continue    # skip shapes where reprojection fails
+            nf = ogr.Feature(out_lyr.GetLayerDefn())
+            nf.SetGeometry(g)
+            out_lyr.CreateFeature(nf)
+            n_ok += 1
+
+        if n_ok == 0:
+            self.exception = RuntimeError(
+                f'No valid canvas polygon could be rasterised.\n'
+                f'{len(wkts)} shape(s) were supplied but none produced '
+                f'valid geometry after reprojection.\n'
+                f'Check that the project (or GEOMETRY parameter) has a '
+                f'valid CRS assigned.')
+            return None
+
+        QgsMessageLog.logMessage(
+            f'Canvas Draw: {n_ok} shape(s), needs_reproject={needs_transform}',
+            _CAT, Qgis.Info)
+
+        # Check overlap — same logic as _vector_mask
+        env       = out_lyr.GetExtent()
+        rast_minX = gt[0]
+        rast_maxX = gt[0] + W * gt[1]
+        rast_minY = gt[3] + H * gt[5]
+        rast_maxY = gt[3]
+        overlap = (env[0] < rast_maxX and env[1] > rast_minX and
+                   env[2] < rast_maxY and env[3] > rast_minY)
+        if not overlap:
+            self.exception = RuntimeError(
+                'Drawn shape does not overlap the raster extent.\n'
+                f'Shape:   X {env[0]:.1f}–{env[1]:.1f},  '
+                f'Y {env[2]:.1f}–{env[3]:.1f}\n'
+                f'Raster:  X {rast_minX:.1f}–{rast_maxX:.1f},  '
+                f'Y {rast_minY:.1f}–{rast_maxY:.1f}\n\n'
+                'Both must be in the same projected CRS.')
+            return None
+
+        # ── Rasterise ─────────────────────────────────────────────────────────
+        self.setProgress(20)
+        if self.isCanceled():
+            return None
+
+        burn = self._tmp('_cv_burn.tif')
+        bds  = gdal.GetDriverByName('GTiff').Create(
+            burn, W, H, 1, gdal.GDT_Byte)
+        if bds is None:
+            self.exception = RuntimeError(
+                'Cannot create rasterisation temp file.')
+            return None
+        bds.SetGeoTransform(gt)
+        bds.SetProjection(prj)
+        bb = bds.GetRasterBand(1)
+        bb.Fill(0)
+        bb.SetNoDataValue(255)
+        opts = ['ALL_TOUCHED=TRUE'] if p.get('all_touched') else []
+        gdal.RasterizeLayer(bds, [1], out_lyr, burn_values=[1], options=opts)
+        bds.FlushCache()
+        bds     = None
+        out_lyr = None
+        out_mem = None
+
+        rds  = gdal.Open(burn, gdal.GA_ReadOnly)
+        if rds is None:
+            self.exception = RuntimeError('Cannot read rasterisation result.')
+            return None
+        data = rds.GetRasterBand(1).ReadAsArray()
+        rds  = None
+
+        n_burned = int(np.sum(data == 1))
+        QgsMessageLog.logMessage(
+            f'Canvas Draw rasterised: {n_burned:,} / {W*H:,} px inside shape '
+            f'({100 * n_burned / (W*H):.1f}%)',
+            _CAT, Qgis.Info)
+
+        return data == 1    # True where pixel is inside a drawn shape

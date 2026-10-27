@@ -1,6 +1,6 @@
 # MaskQ
 
-**A QGIS plugin for masking and clipping rasters by condition, raster mask, or polygon boundary.**
+**A QGIS plugin for masking and clipping rasters by condition, raster mask, polygon boundary, or a shape drawn on the canvas.**
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B-green)](https://qgis.org)
 [![License](https://img.shields.io/badge/License-GPL--2.0%2B-blue)](LICENSE)
@@ -12,15 +12,16 @@
 
 MaskQ lets you keep only the pixels that meet a condition and write everything else as NoData — or crop the raster entirely to the boundary of the kept pixels.
 
-Three masking modes:
+Four masking modes:
 
 | Mode | Description |
 |---|---|
 | **Value Range** | Keep pixels within a min–max range or meeting a threshold (`> 500`, `≤ 0.3`, etc.) |
 | **Raster Mask** | Use a second raster (QA band, cloud mask, water mask) to flag pixels for removal |
 | **Vector Mask** | Keep pixels inside a polygon layer — respects definition queries and selected features |
+| **Canvas Draw** | Draw the shape directly on the map — Freehand, Polygon (click to place vertices), Rectangle (drag a box), or the current map extent. Multiple shapes per run |
 
-Three output operations:
+Three output operations (Clip and Crop are available for Vector Mask and Canvas Draw):
 
 | Operation | Result |
 |---|---|
@@ -63,8 +64,8 @@ Three output operations:
 
 1. Open the panel from **Raster → MaskQ** or the toolbar icon
 2. Select your input raster
-3. Choose a mask method (Value Range / Raster Mask / Vector Mask)
-4. Set the condition
+3. Choose a mask method (Value Range / Raster Mask / Vector Mask / Canvas Draw)
+4. Set the condition — or, for Canvas Draw, click Freehand, Polygon or Rectangle and draw on the map (Esc or right-click cancels; Polygon closes on double-click, Enter or right-click, Backspace removes the last vertex), or press Use Current Extent
 5. Choose an operation (Mask / Clip / Crop)
 6. Click **Run**
 
@@ -74,7 +75,7 @@ The output is saved next to the input raster with a descriptive name, or to the 
 
 ## Processing Toolbox
 
-MaskQ registers three algorithms under the **MaskQ** group:
+MaskQ registers four algorithms under the **MaskQ** group (`maskbyvaluerange`, `maskbyraster`, `maskbyvector`, `maskbycanvasdraw`):
 
 ```python
 # Value range mask
@@ -85,6 +86,15 @@ processing.run("maskq:maskbyvaluerange", {
     'V_MIN': 0.3,
     'V_MAX': 0.8,
     'OPERATION': 0,           # 0=Mask, 1=Clip, 2=Crop
+    'OUTPUT': 'path/to/output.tif'
+})
+
+# Canvas draw mask — polygon(s) supplied as WKT, separate multiple with ';'
+processing.run("maskq:maskbycanvasdraw", {
+    'INPUT': 'path/to/raster.tif',
+    'GEOMETRY': 'POLYGON((500000 9000000, 501000 9000000, 501000 9001000, 500000 9000000))',
+    'GEOMETRY_CRS': 'EPSG:32736',   # optional — defaults to the raster CRS
+    'OPERATION': 0,                 # 0=Mask, 1=Clip, 2=Crop
     'OUTPUT': 'path/to/output.tif'
 })
 ```
@@ -102,6 +112,7 @@ processing.run("maskq:maskbyvaluerange", {
 
 - Local file-based rasters only — XYZ tiles, WMS, and WCS layers are not supported
 - Live preview available for Value Range mode only
+- Canvas Draw shapes are not saved between QGIS sessions
 - Raster mask must use a single band as the flag layer
 
 ---

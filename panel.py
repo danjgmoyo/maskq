@@ -18,7 +18,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.gui import (
     QgsMapLayerComboBox, QgsRasterBandComboBox,
-    QgsFileWidget, QgsColorButton,
+    QgsFileWidget, QgsColorButton, QgsRubberBand,
 )
 from qgis.core import (
     QgsMapLayerProxyModel, QgsSettings, QgsApplication,
@@ -26,9 +26,13 @@ from qgis.core import (
     QgsRasterShader, QgsColorRampShader,
     QgsSingleBandPseudoColorRenderer,
     QgsPalettedRasterRenderer, QgsProcessingUtils,
+    QgsGeometry, QgsWkbTypes,
 )
 from .task import MaskQTask, EXT_DRIVER
 from .histogram import HistogramSection
+from .canvas_draw import (
+    MQFreehandCaptureTool, MQLineSegmentCaptureTool, MQRectangleCaptureTool,
+)
 
 # Brand green — only hardcoded colour. Everything else is native Qt.
 _GREEN       = '#589632'
@@ -292,7 +296,8 @@ class MaskQPanel(QDockWidget):
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
         self._mode_btns  = []
-        for i, label in enumerate(['Value Range', 'Raster Mask', 'Vector Mask']):
+        for i, label in enumerate(['Value Range', 'Raster Mask', 'Vector Mask',
+                                    'Canvas Draw']):
             b = QToolButton()
             b.setText(label)
             b.setCheckable(True)
@@ -306,6 +311,7 @@ class MaskQPanel(QDockWidget):
         self._mode_stack.addWidget(self._build_value_range_page())
         self._mode_stack.addWidget(self._build_raster_mask_page())
         self._mode_stack.addWidget(self._build_vector_mask_page())
+        self._mode_stack.addWidget(self._build_canvas_draw_page())
         vl.addWidget(self._mode_stack)
         return card
 
@@ -510,6 +516,184 @@ class MaskQPanel(QDockWidget):
 
         return w
 
+    def _build_canvas_draw_page(self):
+        w  = QWidget()
+        vl = QVBoxLayout(w)
+        vl.setContentsMargins(0, 4, 0, 0)
+        vl.setSpacing(6)
+
+        # Runtime state for this mode — lists, not None, so _on_run can
+        # check truthiness without a hasattr guard everywhere.
+        self._canvas_wkts    = []     # captured shapes, WKT, in canvas CRS
+        self._canvas_methods = []     # how each shape was made (for naming)
+        self._canvas_bands   = []     # persistent QgsRubberBand per shape
+        self._draw_tool      = None   # active QgsMapTool while drawing
+        self._tool_cache     = {}     # idx -> tool, built once and reused
+        self._draw_method    = ''     # method of the active tool
+        self._prev_map_tool  = None   # canvas tool to restore afterwards
+
+        # One click arms a drawing tool straight away — no separate
+        # "choose method, then press Draw" step.
+        self._draw_tools = [
+            ('freehand',  'Freehand',  MQFreehandCaptureTool,
+             'Freehand: press and drag on the map, release to close. '
+             'Right-click or Esc to cancel.'),
+            ('polygon',   'Polygon',   MQLineSegmentCaptureTool,
+             'Polygon: click to place vertices. Double-click, Enter or '
+             'right-click closes the shape. Backspace removes the last '
+             'vertex. Esc cancels.'),
+            ('rectangle', 'Rectangle', MQRectangleCaptureTool,
+             'Rectangle: press and drag a box on the map, release to '
+             'close. Right-click or Esc to cancel.'),
+        ]
+        tool_row = QHBoxLayout()
+        tool_row.setSpacing(2)
+        self._draw_btns = []
+        for i, (_key, label, _cls, _hint) in enumerate(self._draw_tools):
+            b = QToolButton()
+            b.setText(label)
+            b.setCheckable(True)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            b.clicked.connect(lambda checked, idx=i: self._on_draw_tool_clicked(idx, checked))
+            self._draw_btns.append(b)
+            tool_row.addWidget(b)
+        vl.addLayout(tool_row)
+
+        btn_row = QHBoxLayout()
+        self.btn_extent = QPushButton('Use Current Extent')
+        self.btn_clear  = QPushButton('Clear')
+        self.btn_clear.setEnabled(False)
+        btn_row.addWidget(self.btn_extent)
+        btn_row.addWidget(self.btn_clear)
+        vl.addLayout(btn_row)
+        self.btn_extent.clicked.connect(self._on_use_extent)
+        self.btn_clear.clicked.connect(self._on_draw_clear)
+
+        self.lbl_draw_status = _lbl('No shape drawn yet.', 'dim')
+        vl.addWidget(self.lbl_draw_status)
+
+        self.chk_all_touched_cv = QCheckBox('All touched pixels')
+        vl.addWidget(self.chk_all_touched_cv)
+
+        return w
+
+    # ── canvas draw handlers ─────────────────────────────────────────────────
+
+    def _reset_draw_buttons(self):
+        for b in self._draw_btns:
+            try:
+                b.blockSignals(True)
+                b.setChecked(False)
+                b.blockSignals(False)
+            except RuntimeError:      # widget already destroyed (unload)
+                return
+
+    def _on_draw_tool_clicked(self, idx, checked):
+        """A tool button was clicked: arm that tool, or disarm if it was
+        already active. Always starts from a clean state so tools never
+        stack on top of each other."""
+        self._deactivate_draw_tool()
+        if not checked:
+            return
+        key, label, cls, hint = self._draw_tools[idx]
+        canvas = self.iface.mapCanvas()
+        self._prev_map_tool = canvas.mapTool()
+        self._draw_method = key
+        if idx not in self._tool_cache:
+            self._tool_cache[idx] = cls(canvas)
+        self._draw_tool = self._tool_cache[idx]
+        self._draw_tool.captured.connect(self._on_shape_captured)
+        self._draw_tool.cancelled.connect(self._on_draw_cancelled)
+        self._draw_tool.deactivated.connect(self._on_draw_tool_lost)
+        canvas.setMapTool(self._draw_tool)
+        for i, b in enumerate(self._draw_btns):     # only this button checked
+            b.blockSignals(True)
+            b.setChecked(i == idx)
+            b.blockSignals(False)
+        QgsMessageLog.logMessage(
+            f'Canvas Draw tool armed: {key}', 'MaskQ', Qgis.Info)
+        self._bar(hint, Qgis.Info, dur=8)
+
+    def _on_use_extent(self):
+        """Capture the current map canvas extent as a rectangle shape."""
+        self._deactivate_draw_tool()
+        self._draw_method = 'extent'
+        self._on_shape_captured(
+            QgsGeometry.fromRect(self.iface.mapCanvas().extent()))
+
+    def _on_shape_captured(self, geom):
+        if geom is None or geom.isEmpty() or geom.area() <= 0:
+            self._on_draw_cancelled()
+            return
+        method = self._draw_method or 'draw'
+        self._canvas_wkts.append(geom.asWkt())
+        self._canvas_methods.append(method)
+
+        canvas = self.iface.mapCanvas()
+        band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        band.setColor(QColor(220, 80, 20, 60))
+        band.setStrokeColor(QColor(220, 80, 20))
+        band.setWidth(2)
+        band.setToGeometry(geom, None)
+        self._canvas_bands.append(band)
+
+        self._deactivate_draw_tool()
+        n = len(self._canvas_wkts)
+        self.lbl_draw_status.setText(
+            f'{n} shape{"s" if n != 1 else ""} drawn. '
+            'Click a tool again to add another.')
+        self.btn_clear.setEnabled(True)
+
+    def _on_draw_cancelled(self):
+        self._deactivate_draw_tool()
+
+    def _on_draw_tool_lost(self):
+        """The user switched to another canvas tool (Pan, Zoom, ...) while
+        ours was armed. Drop our state but don't touch the canvas tool."""
+        tool = self._draw_tool
+        if tool is not None:
+            for sig, slot in ((tool.captured, self._on_shape_captured),
+                              (tool.cancelled, self._on_draw_cancelled),
+                              (tool.deactivated, self._on_draw_tool_lost)):
+                try:
+                    sig.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
+        self._draw_tool = None
+        self._reset_draw_buttons()
+
+    def _deactivate_draw_tool(self):
+        """Detach the active capture tool, if any, restore whatever map tool
+        the user had before, and un-check the tool buttons."""
+        self._reset_draw_buttons()
+        tool = self._draw_tool
+        if tool is None:
+            return
+        for sig, slot in ((tool.captured, self._on_shape_captured),
+                          (tool.cancelled, self._on_draw_cancelled),
+                          (tool.deactivated, self._on_draw_tool_lost)):
+            try:
+                sig.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        canvas = self.iface.mapCanvas()
+        if canvas.mapTool() is tool:
+            if self._prev_map_tool is not None:
+                canvas.setMapTool(self._prev_map_tool)
+            else:
+                canvas.unsetMapTool(tool)
+        self._draw_tool = None
+
+    def _on_draw_clear(self):
+        self._deactivate_draw_tool()
+        for band in self._canvas_bands:
+            band.reset(QgsWkbTypes.PolygonGeometry)
+        self._canvas_bands   = []
+        self._canvas_wkts    = []
+        self._canvas_methods = []
+        self.lbl_draw_status.setText('No shape drawn yet.')
+        self.btn_clear.setEnabled(False)
+
     # ── options card ──────────────────────────────────────────────────────────
 
     def _build_options_card(self):
@@ -697,6 +881,11 @@ class MaskQPanel(QDockWidget):
     def _switch_mode(self, idx):
         if not hasattr(self, '_mode_stack') or not hasattr(self, '_mode_group'):
             return
+        # Leaving Canvas Draw mode — stop any in-progress capture so the
+        # tool doesn't stay attached to the canvas while another mode
+        # (or the user's own map tool) is meant to be active.
+        if self._mode_stack.currentIndex() == 3 and idx != 3:
+            self._deactivate_draw_tool()
         self._mode_stack.setCurrentIndex(idx)
         b = self._mode_group.button(idx)
         if b and not b.isChecked(): b.setChecked(True)
@@ -707,16 +896,17 @@ class MaskQPanel(QDockWidget):
     def _rebuild_operation_combo(self, mode_idx):
         """Rebuild the Operation dropdown based on the active mode.
 
-        Clip and Crop only make sense for Vector mode — they produce a
-        physically smaller file by cropping to the polygon bounding box.
-        For Value Range and Raster Mask, kept pixels are scattered across
-        the whole raster so cropping never reduces the file size.
-        Rather than showing unclickable greyed items (confusing),
+        Clip and Crop only make sense for Vector and Canvas Draw modes —
+        they produce a physically smaller file by cropping to the polygon
+        bounding box. For Value Range and Raster Mask, kept pixels are
+        scattered across the whole raster so cropping never reduces the
+        file size. Rather than showing unclickable greyed items (confusing),
         we simply remove them from the list when they don't apply.
         """
         if not hasattr(self, 'cmb_operation'):
             return
-        is_vector = (mode_idx == 2)   # 0=ValueRange 1=RasterMask 2=VectorMask
+        # 0=ValueRange 1=RasterMask 2=VectorMask 3=CanvasDraw
+        is_vector = mode_idx in (2, 3)
 
         # Remember what was selected so we can restore it if still valid
         prev = self.cmb_operation.currentData()
@@ -1293,6 +1483,11 @@ class MaskQPanel(QDockWidget):
             if vl is None or not vl.isValid():
                 self._bar('Select a valid polygon layer.', Qgis.Warning)
                 return
+        elif mode == 4:
+            if not self._canvas_wkts:
+                self._bar('Draw a shape on the canvas before running.',
+                          Qgis.Warning)
+                return
 
         # Warn if NoData value falls inside the data range (real values mode)
         if self.cmb_out_type.currentData() == 0:
@@ -1393,7 +1588,16 @@ class MaskQPanel(QDockWidget):
                 'buffer_dist'       : self.spn_buf.value(),
             })
 
-        mode_lbl = {1: 'value range', 2: 'raster mask', 3: 'vector mask'}
+        if mode == 4:
+            params.update({
+                'canvas_wkts'   : list(self._canvas_wkts),
+                'canvas_crs_wkt': self.iface.mapCanvas().mapSettings()
+                                  .destinationCrs().toWkt(),
+                'all_touched'   : self.chk_all_touched_cv.isChecked(),
+            })
+
+        mode_lbl = {1: 'value range', 2: 'raster mask', 3: 'vector mask',
+                    4: 'canvas draw'}
         op       = params['operation']
         desc     = (f"MaskQ {op.replace('_','+')} "
                     f"({mode_lbl[mode]})")
@@ -1572,6 +1776,14 @@ class MaskQPanel(QDockWidget):
                 mode_str = f'vector_{vec_stem}'
             else:
                 mode_str = 'vector'
+
+        elif mode == 4:
+            # Canvas Draw — name after the draw method and shape count
+            methods = set(self._canvas_methods)
+            how = methods.pop() if len(methods) == 1 else 'mixed'
+            n = len(self._canvas_wkts)
+            mode_str = (f'canvasdraw_{how}'
+                        f'{f"_{n}shapes" if n > 1 else ""}')
         else:
             mode_str = 'filter'
 
@@ -1738,6 +1950,10 @@ class MaskQPanel(QDockWidget):
             self._task = None
         self._stop_stats()
         self._destroy_preview()
+        self._deactivate_draw_tool()
+        for band in getattr(self, '_canvas_bands', []):
+            band.reset(QgsWkbTypes.PolygonGeometry)
+        self._canvas_bands = []
 
     def changeEvent(self, event):
         """Re-apply the stylesheet when the system palette changes.

@@ -3,7 +3,7 @@ import os
 """
 provider.py  —  QGIS Processing Toolbox integration.
 
-Registers three algorithms so MaskQ modes are available from:
+Registers four algorithms so MaskQ modes are available from:
   • Processing Toolbox panel
   • Model Builder (graphical modeller)
   • Python console: processing.run('maskq:maskbyvaluerange', {...})
@@ -26,6 +26,8 @@ from qgis.core import (
     QgsProcessingParameterEnum,
     QgsProcessingParameterVectorLayer,
     QgsProcessingParameterRasterDestination,
+    QgsProcessingParameterString,
+    QgsProcessingParameterCrs,
     QgsProcessing,
     QgsApplication,
 )
@@ -44,14 +46,14 @@ class MaskQProvider(QgsProcessingProvider):
 
     def loadAlgorithms(self):
         """Add all algorithms. To add a new one: instantiate it here."""
-        for cls in (AlgoValueRange, AlgoRasterMask, AlgoVectorMask):
+        for cls in (AlgoValueRange, AlgoRasterMask, AlgoVectorMask, AlgoCanvasDraw):
             self.addAlgorithm(cls())
 
 
 # ── Shared base class ─────────────────────────────────────────────────────────
 
 class _MQAlgoBase(QgsProcessingAlgorithm):
-    """Base class shared by all three algorithms.
+    """Base class shared by all four algorithms.
 
     Contains the output parameters that are identical across all modes
     (operation, output type, NoData, invert, preserve dtype, exclude NoData).
@@ -78,7 +80,7 @@ class _MQAlgoBase(QgsProcessingAlgorithm):
             return super().flags()
 
     def _add_common_params(self, config):
-        """Add the output-side parameters shared by all three algorithms."""
+        """Add the output-side parameters shared by all four algorithms."""
         config.addParameter(QgsProcessingParameterEnum(
             'OPERATION', 'Operation',
             options=self.OP_LABELS, defaultValue=0))
@@ -305,5 +307,67 @@ class AlgoVectorMask(_MQAlgoBase):
                 parameters, 'ALL_TOUCHED', context),
             'buffer_dist'       : self.parameterAsDouble(
                 parameters, 'BUFFER', context),
+        })
+        return self._run_task(params, parameters, context, feedback)
+
+
+# ── Algorithm 4: Canvas Draw ──────────────────────────────────────────────────
+
+class AlgoCanvasDraw(_MQAlgoBase):
+    """Keep pixels inside one or more polygons supplied as WKT.
+
+    In the panel this mode is drawn interactively (Freehand, Polygon,
+    Rectangle, or current extent). Processing runs headlessly, so the same polygon(s)
+    are supplied here as WKT text instead of being drawn.
+    """
+
+    def name(self):        return 'maskbycanvasdraw'
+    def displayName(self): return 'Mask / clip by canvas draw (WKT)'
+    def shortHelpString(self):
+        return (
+            'Keep pixels whose centres fall inside one or more polygons '
+            'supplied as WKT — the same shapes the panel lets you draw '
+            'with Freehand, Polygon, Rectangle, or Use Current Extent. '
+            'Separate multiple polygons with a semicolon (;). '
+            'If GEOMETRY_CRS is left unset, the WKT is assumed to already '
+            'be in the input raster\'s CRS.')
+
+    def initAlgorithm(self, config=None):
+        self.addParameter(QgsProcessingParameterRasterLayer(
+            'INPUT', 'Input raster'))
+        self.addParameter(QgsProcessingParameterString(
+            'GEOMETRY', 'Polygon WKT (separate multiple with ;)',
+            multiLine=True))
+        self.addParameter(QgsProcessingParameterCrs(
+            'GEOMETRY_CRS', 'CRS of the WKT above',
+            optional=True))
+        self.addParameter(QgsProcessingParameterBoolean(
+            'ALL_TOUCHED', 'All touched pixels (include edge pixels)',
+            defaultValue=False))
+        self._add_common_params(self)
+
+    def processAlgorithm(self, parameters, context, feedback):
+        lyr = self.parameterAsRasterLayer(parameters, 'INPUT', context)
+        wkt_text = self.parameterAsString(parameters, 'GEOMETRY', context)
+        wkts = [w.strip() for w in wkt_text.replace('\n', ';').split(';')
+                if w.strip()]
+        if not wkts:
+            feedback.reportError(
+                'GEOMETRY must contain at least one polygon WKT.',
+                fatalError=True)
+            return {}
+
+        crs = self.parameterAsCrs(parameters, 'GEOMETRY_CRS', context)
+        crs_wkt = crs.toWkt() if (crs and crs.isValid()) else ''
+
+        params = self._read_common_params(parameters, context)
+        params.update({
+            'input_path'    : lyr.source(),
+            'input_crs_wkt' : lyr.crs().toWkt() if lyr.crs().isValid() else '',
+            'mode'          : 4,
+            'canvas_wkts'   : wkts,
+            'canvas_crs_wkt': crs_wkt,
+            'all_touched'   : self.parameterAsBool(
+                parameters, 'ALL_TOUCHED', context),
         })
         return self._run_task(params, parameters, context, feedback)
