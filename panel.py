@@ -73,6 +73,12 @@ _STYLE = (
     f"selection-background-color:{_GREEN};selection-color:white;}}"
 )
 
+def _swallow(where, exc):
+    """Log an error that is deliberately not raised (teardown / cosmetic)."""
+    QgsMessageLog.logMessage(
+        f'Suppressed error at {where}: {exc}', 'MaskQ', Qgis.Warning)
+
+
 def _card(title=''):
     """Native QGroupBox — renders with OS border and title, adapts to all themes."""
     gb = QGroupBox(title)
@@ -140,8 +146,8 @@ class _StatsWorker(QObject):
                         counts = arr.tolist()
                         n_samp = int(arr.sum())
                 ds = None
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("panel.py:144", exc)
         self.done.emit(lo, hi, dt, counts, n_samp)
 
 # ── main panel ────────────────────────────────────────────────────────────────
@@ -270,15 +276,15 @@ class MaskQPanel(QDockWidget):
             filt = QgsProviderRegistry.instance().fileRasterFilters()
             if filt:
                 self.file_out.setFilter(filt)
-        except Exception:
-            pass   # leave QgsFileWidget with its default filter
+        except Exception as exc:
+            _swallow("panel.py:274", exc)   # leave QgsFileWidget with its default filter
         # QGIS native filter starts with VRT — placeholder clarifies
         # that leaving the field blank auto-saves as .tif
         try:
             self.file_out.lineEdit().setPlaceholderText(
                 'Leave blank to auto-save as .tif next to input')
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("panel.py:281", exc)
         last_dir = QgsSettings().value('MaskQ/last_dir', '')
         if last_dir:
             self.file_out.setDefaultRoot(last_dir)
@@ -837,8 +843,8 @@ class MaskQPanel(QDockWidget):
         for a, b in pairs:
             try:
                 self.setTabOrder(a, b)
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("panel.py:841", exc)
 
     def _connect_signals(self):
         self.cmb_layer.layerChanged.connect(self._refresh_layer)
@@ -1010,16 +1016,16 @@ class MaskQPanel(QDockWidget):
                 from PyQt5 import sip
                 if not sip.isdeleted(worker):
                     worker.done.disconnect()
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("panel.py:1014", exc)
         if thread is None:
             return
         try:
             from PyQt5 import sip
             if sip.isdeleted(thread):
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("panel.py:1022", exc)
         try:
             if thread.isRunning():
                 thread.quit()
@@ -1058,8 +1064,8 @@ class MaskQPanel(QDockWidget):
             from PyQt5 import sip
             if lyr is not None and not sip.isdeleted(lyr) and lyr.isValid():
                 crs = lyr.crs().authid()
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("panel.py:1062", exc)
         nd_txt = ''
         try:
             from osgeo import gdal
@@ -1075,8 +1081,8 @@ class MaskQPanel(QDockWidget):
                     _ds = None
                     if _nd is not None:
                         nd_txt = f'  ·  NoData={_nd:.4g}'
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("panel.py:1079", exc)
         self.lbl_info.setText(f'{dtype}  ·  {crs}  ·  {lo:.4g} – {hi:.4g}{nd_txt}')
 
         # Re-evaluate preview enabled state now that stats are loaded
@@ -1183,8 +1189,8 @@ class MaskQPanel(QDockWidget):
                     vl.updateExtents()
                     # Use dataProvider for accurate filtered count
                     tot = sum(1 for _ in vl.getFeatures())
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _swallow("panel.py:1187", exc)
             sel = vl.selectedFeatureCount()
             if self.chk_sel.isChecked():
                 if sel == 0:
@@ -1363,8 +1369,8 @@ class MaskQPanel(QDockWidget):
 
             self._prev_fnc.setColorRampItemList(items)
             self._prev_layer.triggerRepaint()
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("panel.py:1367", exc)
 
     def _destroy_preview(self):
         if self._prev_layer is not None:
@@ -1373,8 +1379,8 @@ class MaskQPanel(QDockWidget):
                     QgsProject.instance().removeMapLayer(
                         self._prev_layer.id())
                     self.iface.mapCanvas().refresh()
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("panel.py:1377", exc)
             self._prev_layer = None
             self._prev_fnc   = None
 
@@ -1655,7 +1661,8 @@ class MaskQPanel(QDockWidget):
                 continue
             try:
                 lsrc = os.path.normcase(os.path.normpath(layer.source()))
-            except Exception:
+            except Exception as exc:
+                _swallow("panel.py:1659", exc)
                 continue
             if lsrc == norm:
                 self._unloaded_sources.append((layer.name(), layer.source()))
@@ -1861,8 +1868,8 @@ class MaskQPanel(QDockWidget):
                 # Open the Log Messages panel so the user can see the full trace
                 try:
                     self.iface.openMessageLog()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _swallow("panel.py:1865", exc)
             self._bar(msg, Qgis.Critical, dur=12)
             # Restore layers that were unloaded before task launch (Windows lock)
             for lname, lsource in getattr(self, '_unloaded_sources', []):
@@ -1870,8 +1877,8 @@ class MaskQPanel(QDockWidget):
                     rl = QgsRasterLayer(lsource, lname)
                     if rl.isValid():
                         QgsProject.instance().addMapLayer(rl)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _swallow("panel.py:1874", exc)
             self._unloaded_sources = []
             return
 
@@ -1945,8 +1952,8 @@ class MaskQPanel(QDockWidget):
         if self._task is not None:
             try:
                 self._task.cancel()
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("panel.py:1949", exc)
             self._task = None
         self._stop_stats()
         self._destroy_preview()

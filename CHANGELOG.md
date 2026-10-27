@@ -16,6 +16,10 @@ All notable changes to MaskQ are documented here.
 - Output names reflect the draw method and shape count (e.g. `dem_masked_canvasdraw_freehand.tif`)
 - New Processing Toolbox algorithm **Mask / clip by canvas draw (WKT)** — `maskq:maskbycanvasdraw` — takes polygon WKT (multiple shapes separated by `;`) and an optional CRS; usable from Model Builder and the Python console
 
+### Fixed
+- The "output same as input" check now runs in the processing engine, so Processing and Model Builder runs are protected too; it compares files on disk, so relative paths and layer-name suffixes can't bypass it
+- Errors that were silently swallowed (teardown and cosmetic code) are now written to the MaskQ tab in the Log Messages panel
+
 ### Changed
 - New `canvas_draw.py` module holds the interactive map tools, keeping `panel.py` free of canvas-tool logic
 

@@ -38,6 +38,15 @@ _MIN_H     = 110
 _HANDLE_HIT = 12
 
 
+import logging as _logging
+
+
+def _swallow(where, exc):
+    """Log an error that is deliberately not raised (pure-Qt module)."""
+    _logging.getLogger('MaskQ').warning(
+        'Suppressed error at %s: %s', where, exc)
+
+
 def _fmt(v):
     """Compact axis tick label."""
     if v == 0:
@@ -423,8 +432,8 @@ class HistogramSection(QWidget):
         self._canvas.set_range(lo, hi)
         try:
             self._canvas.range_changed.connect(self.range_changed)
-        except Exception:
-            pass
+        except Exception as exc:
+            _swallow("histogram.py:427", exc)
 
     def set_range_ops(self, min_op, max_op):
         """Set Min/Max handle operators — controls solid vs dashed line."""

@@ -19,6 +19,8 @@ changelog=0.1.2
     - New Canvas Draw mode: draw the mask shape directly on the map canvas using Freehand, Polygon (click to place vertices), Rectangle, or the current map extent
     - Canvas Draw supports multiple shapes per run, and the same Mask, Clip and Crop operations as Vector Mask
     - New Processing Toolbox algorithm "Mask / clip by canvas draw (WKT)" (maskq:maskbycanvasdraw) for scripting and Model Builder
+    - Output-over-input protection now applies to Processing and Model Builder runs too
+    - Suppressed errors are logged to the MaskQ tab instead of being silently ignored
     0.1.1
     - Range mode Min/Max boundaries can each be set to inclusive (>=, <=) or strict (>, <), matching Threshold mode
     - Histogram handles now show solid (inclusive) or dashed (strict) lines for both Range and Threshold modes

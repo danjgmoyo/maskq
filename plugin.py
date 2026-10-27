@@ -14,7 +14,13 @@ import os
 from qgis.PyQt.QtWidgets import QAction
 from qgis.PyQt.QtGui     import QIcon
 from qgis.PyQt.QtCore    import Qt
-from qgis.core           import QgsApplication, Qgis
+from qgis.core           import QgsApplication, QgsMessageLog, Qgis
+
+
+def _swallow(where, exc):
+    """Log an error that is deliberately not raised (teardown / cosmetic)."""
+    QgsMessageLog.logMessage(
+        f'Suppressed error at {where}: {exc}', 'MaskQ', Qgis.Warning)
 
 
 class MaskQPlugin:
@@ -58,8 +64,8 @@ class MaskQPlugin:
                 if not sip.isdeleted(self._provider):
                     QgsApplication.processingRegistry().removeProvider(
                         self._provider)
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("plugin.py:62", exc)
             self._provider = None
 
         if self._action is not None:
@@ -67,8 +73,8 @@ class MaskQPlugin:
                 self.iface.removeToolBarIcon(self._action)
                 self.iface.removePluginToRasterMenu('&MaskQ',
                                                     self._action)
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("plugin.py:71", exc)
             self._action = None
 
         if self._panel is not None:
@@ -76,8 +82,8 @@ class MaskQPlugin:
                 self._panel.cleanup()              # stop threads, remove preview
                 self.iface.removeDockWidget(self._panel)
                 self._panel.deleteLater()
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("plugin.py:80", exc)
             self._panel = None
 
     # ── panel toggle logic ────────────────────────────────────────────────────

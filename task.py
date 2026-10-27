@@ -114,6 +114,12 @@ _DTYPES = {
 
 # ── module-level helper functions ─────────────────────────────────────────────
 
+def _swallow(where, exc):
+    """Log an error that is deliberately not raised (teardown / cosmetic)."""
+    QgsMessageLog.logMessage(
+        f'Suppressed error at {where}: {exc}', 'MaskQ', Qgis.Warning)
+
+
 def _cmp(array, op, value):
     """Apply a comparison operator to a numpy array.
     Returns a bool array: True where the condition holds.
@@ -148,6 +154,14 @@ def _out_dtype(input_gdt, nodata_value, preserve):
         return (input_gdt, npt) if fits else (gdal.GDT_Float32, np.float32)
     except Exception:
         return gdal.GDT_Float32, np.float32
+
+
+def _same_file(a, b):
+    """True if two paths refer to the same file on disk (follows symlinks)."""
+    if os.path.exists(a) and os.path.exists(b):
+        return os.path.samefile(a, b)
+    return os.path.normcase(os.path.realpath(a)) == \
+        os.path.normcase(os.path.realpath(b))
 
 
 def _wkt_to_srs(wkt):
@@ -260,8 +274,8 @@ class MaskQTask(QgsTask):
             try:
                 if os.path.exists(path):
                     os.remove(path)
-            except Exception:
-                pass
+            except Exception as exc:
+                _swallow("task.py:264", exc)
         self._temps.clear()
 
     # ── main execution pipeline ───────────────────────────────────────────────
@@ -274,6 +288,23 @@ class MaskQTask(QgsTask):
         """
         p  = self.params
         t0 = time.time()
+
+        # ── Guard: never write the output over an input file ─────────────────
+        # Runs for every route (GUI, Processing, Model Builder, console).
+        # Overwriting an input while GDAL still has it open corrupts it.
+        out_chk = os.path.abspath(p['output_path'].strip()) \
+            if p.get('output_path') else ''
+        for role, key in (('input raster', 'input_path'),
+                          ('mask raster',  'mask_path'),
+                          ('vector mask',  'vector_path')):
+            src_chk = (p.get(key) or '').split('|')[0].strip()
+            if src_chk and out_chk and \
+                    _same_file(out_chk, os.path.abspath(src_chk)):
+                self.exception = RuntimeError(
+                    f'Output path is the same as the {role}:\n{out_chk}\n\n'
+                    'Choose a different output file to avoid destroying '
+                    'your data.')
+                return False
 
         # ── Step 1: Open input raster ─────────────────────────────────────────
         # Always resolve to absolute path. dataSourceUri() can return a path
